@@ -60,7 +60,9 @@ fi
 # Falls back to a direct connection if the proxy still isn't up rather than
 # breaking the session — the pane title says which path you got.
 if proxy_up; then
-  tmux send-keys -t "$SESSION:dev.0" "ANTHROPIC_BASE_URL=$CONTEXTLAB claude" C-m
+  # export (not a one-shot prefix) so a manual claude relaunch in this pane
+  # keeps routing through the proxy.
+  tmux send-keys -t "$SESSION:dev.0" "export ANTHROPIC_BASE_URL=$CONTEXTLAB && claude" C-m
   tmux select-pane -t "$SESSION:dev.0" -T "claude→contextlab"
 else
   tmux send-keys -t "$SESSION:dev.0" "claude" C-m
