@@ -1,0 +1,11 @@
+__pycache__/
+*.py[oc]
+.venv/
+*.db
+*.db-shm
+*.db-wal
+node_modules/
+dist/
+.pytest_cache/
+experiments/**/raw/
+.venv-headroom/

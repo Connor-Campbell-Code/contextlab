@@ -1,0 +1,29 @@
+[project]
+name = "contextlab"
+version = "0.1.0"
+description = "See what actually happens every time you send a prompt — an Anthropic API proxy with live terminal + browser dashboards"
+readme = "README.md"
+authors = [
+    { name = "Connor-Campbell-Code" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.139.0",
+    "httpx>=0.28.1",
+    "textual>=1.0",
+    "uvicorn>=0.50.2",
+    "websockets>=16.0",
+]
+
+[project.scripts]
+contextlab = "contextlab:main"
+
+[build-system]
+requires = ["uv_build>=0.11.27,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+]
