@@ -290,9 +290,8 @@ export function Learn({ turns }: { turns: Turn[] }) {
       </Section>
 
       <p className="learn-footer">
-        Deeper dives, with the experiments behind each number: <code>notebook/</code> — 01 anatomy
-        of one prompt · 03 what is a token anyway · 04 cache dollars, not tokens · 05 payload
-        realism. Claim verdicts: <code>src/contextlab/eval/claims.yaml</code>.
+        Every number on this page is measured on your own traffic, not quoted from a benchmark —
+        the instrument's vantage point is the method.
       </p>
     </div>
   )
