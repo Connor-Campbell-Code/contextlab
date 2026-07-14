@@ -128,7 +128,11 @@ export default function App() {
           <StatTile
             label="Spend"
             value={fmtUsd(kpi.spend)}
-            note={kpi.priced < filtered.length ? `${filtered.length - kpi.priced} unpriced` : 'API-billed usage'}
+            note={
+              kpi.priced < filtered.length
+                ? `last ${filtered.length} requests, ${filtered.length - kpi.priced} unpriced`
+                : `API-billed, last ${filtered.length} requests`
+            }
           />
           <StatTile label="Saved by caching" value={fmtUsd(kpi.savings)} note="vs the same calls uncached" good />
           <StatTile label="Cache hit ratio" value={fmtPct(kpi.hitRatio)} note="of input tokens read at 0.1×" />

@@ -161,10 +161,15 @@ class ContextTop(App):
         # No cache-savings figure here: next to "headroom" a bare "saved $X"
         # reads as Headroom's doing when it's the KV cache's. The web tiles
         # have room to attribute it; this bar doesn't.
+        # Every KPI in this bar is a window over the turn buffer, not
+        # all-time — the spend label carries the window size so a dollar
+        # figure is never mistaken for cumulative spend (the old standalone
+        # "turns" entry was the same number, unlabeled as a window).
         def bar(hr: str) -> str:
             return (
-                f"[b]spend[/] [green]{fmt_usd(k.spend)}[/]  [b]cache hit[/] {fmt_pct(k.hit_ratio)}  "
-                f"[b]headroom[/] {hr}  [b]turns[/] {k.turns}  "
+                f"[b]spend ({k.turns}t)[/] [green]{fmt_usd(k.spend)}[/]  "
+                f"[b]cache hit[/] {fmt_pct(k.hit_ratio)}  "
+                f"[b]headroom[/] {hr}  "
                 f"[b]scope[/] {scope}  {STATE_DOT[self._state]}"
             )
 
