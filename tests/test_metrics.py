@@ -50,6 +50,42 @@ def test_cache_pricing_multipliers():
     assert cost["cache_savings"] == approx(6.0 - cost["total"])
     assert turn_cost_usd("unknown-model", 1, 1, 1, 1) is None
 
+    from contextlab.metrics.pricing import CACHE_WRITE_1H, write_multiplier
+
+    cost_1h = turn_cost_usd("claude-sonnet-5", 0, 0, 0, 1_000_000,
+                            cache_write_multiplier=CACHE_WRITE_1H)
+    assert cost_1h["cache_writes"] == approx(3.0 * 2.0)
+    assert write_multiplier("1h") == 2.0
+    assert write_multiplier("5m") == 1.25
+    assert write_multiplier(None) == 1.25
+
+
+def test_cache_write_ttl_detected_anywhere_in_request():
+    from contextlab.metrics.analyze import cache_economics, cache_write_ttl
+
+    assert cache_write_ttl(_req(1)) is None  # no breakpoints at all
+    # ttl-less breakpoint means the 5-minute default
+    req_5m = _req(1, tools=[{"name": "t", "cache_control": {"type": "ephemeral"}}])
+    assert cache_write_ttl(req_5m) == "5m"
+    # 1h on a system block (where Claude Code puts it) wins over 5m elsewhere
+    req_1h = _req(1, tools=[{"name": "t", "cache_control": {"type": "ephemeral"}}])
+    req_1h["system"] = [
+        {"type": "text", "text": "sys",
+         "cache_control": {"type": "ephemeral", "ttl": "1h"}},
+    ]
+    assert cache_write_ttl(req_1h) == "1h"
+    # breakpoints on message content blocks are seen too
+    req_msg = _req(1)
+    req_msg["messages"][-1]["content"][0]["cache_control"] = {"type": "ephemeral", "ttl": "1h"}
+    assert cache_write_ttl(req_msg) == "1h"
+
+    # the ttl flows through cache_economics into the write price
+    usage = {"cache_creation_input_tokens": 1_000_000}
+    econ = cache_economics("claude-sonnet-5", usage, write_ttl="1h")
+    assert econ["write_ttl"] == "1h"
+    assert econ["cost_usd"]["cache_writes"] == approx(3.0 * 2.0)
+    assert cache_economics("claude-sonnet-5", usage)["cost_usd"]["cache_writes"] == approx(3.0 * 1.25)
+
 
 def test_workdir_parsed_from_string_and_block_system_prompts():
     from contextlab.metrics.analyze import workdir

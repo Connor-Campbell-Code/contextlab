@@ -12,6 +12,11 @@ CACHE_WRITE_5M = 1.25
 CACHE_WRITE_1H = 2.0
 CACHE_READ = 0.1
 
+
+def write_multiplier(ttl: str | None) -> float:
+    """Cache-write multiplier for a cache_control TTL ("5m", "1h", or None)."""
+    return CACHE_WRITE_1H if ttl == "1h" else CACHE_WRITE_5M
+
 # (input $/MTok, output $/MTok), matched by longest prefix of the model id.
 PRICES: dict[str, tuple[float, float]] = {
     "claude-fable-5": (10.0, 50.0),

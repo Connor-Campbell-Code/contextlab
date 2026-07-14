@@ -98,7 +98,30 @@ def workdir(request: dict[str, Any]) -> str | None:
     return match.group(1) if match else None
 
 
-def cache_economics(model: str | None, usage: dict[str, Any]) -> dict[str, Any]:
+def cache_write_ttl(request: dict[str, Any]) -> str | None:
+    """The TTL on the request's cache_control breakpoints, or None if it sets
+    none. A cache_control without an explicit ttl is a 5-minute breakpoint.
+    Requests can in principle mix TTLs; the longest wins, since usage only
+    reports one cache_creation total and 1h writes dominate the bill."""
+    blocks: list[Any] = list(request.get("tools") or [])
+    system = request.get("system")
+    if isinstance(system, list):
+        blocks += system
+    for msg in request.get("messages", []):
+        blocks += _content_blocks(msg.get("content"))
+    ttls = {
+        (block["cache_control"] or {}).get("ttl") or "5m"
+        for block in blocks
+        if isinstance(block, dict) and block.get("cache_control")
+    }
+    if "1h" in ttls:
+        return "1h"
+    return "5m" if ttls else None
+
+
+def cache_economics(
+    model: str | None, usage: dict[str, Any], write_ttl: str | None = None
+) -> dict[str, Any]:
     """Hit ratio and dollars. The lazy metric is total tokens; the real
     question is how many of them were 0.1x cache reads vs full-price input."""
     read = usage.get("cache_read_input_tokens") or 0
@@ -108,8 +131,14 @@ def cache_economics(model: str | None, usage: dict[str, Any]) -> dict[str, Any]:
     return {
         "total_input_tokens": total_input,
         "cache_hit_ratio": round(read / total_input, 4) if total_input else 0.0,
+        "write_ttl": write_ttl,
         "cost_usd": pricing.turn_cost_usd(
-            model, uncached, usage.get("output_tokens") or 0, read, created
+            model,
+            uncached,
+            usage.get("output_tokens") or 0,
+            read,
+            created,
+            pricing.write_multiplier(write_ttl),
         ),
     }
 
@@ -153,7 +182,7 @@ def analyze(
 ) -> dict[str, Any]:
     return {
         "composition": composition(request),
-        "cache": cache_economics(model, usage),
+        "cache": cache_economics(model, usage, cache_write_ttl(request)),
         "delta": turn_delta(request, previous_request),
         "workdir": workdir(request),
     }
