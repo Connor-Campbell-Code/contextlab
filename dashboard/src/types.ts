@@ -43,6 +43,33 @@ export interface HeadroomLens {
     savings_pct_claude: number
     count_drift_pct: number | null
   } | null
+  /** Shadow cache ledger (see shadow_sim.py): prefix survival + ideal-cache
+   * dollars for two counterfactuals. Input-side only — output tokens are
+   * assumed identical in both ledgers. cost_usd absent for unknown models. */
+  shadow?: {
+    /** "if compression had been on since turn 1" — prefix vs previous shadow request */
+    policy: {
+      prefix_tokens: number
+      new_tokens: number
+      total_tokens: number
+      prefix_extension: boolean
+      cost_usd?: number
+    }
+    /** "if compression fired on THIS request" — prefix vs previous RAW request;
+     * net_usd = actual billed input cost − this cost (negative = would cost money) */
+    marginal: {
+      prefix_tokens: number
+      new_tokens: number
+      total_tokens: number
+      cost_usd?: number
+      net_usd?: number
+    }
+    fired: boolean
+    /** first turn seen for this context (or worker restart): full write on both ledgers */
+    reset: boolean
+    /** reset turn or the one after — instrument boundary; excluded from KPI sums */
+    warmup?: boolean
+  } | null
 }
 
 export interface Metrics {

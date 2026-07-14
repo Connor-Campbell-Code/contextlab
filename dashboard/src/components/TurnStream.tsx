@@ -1,7 +1,7 @@
 import { CATEGORIES, OTHER_KEYS } from '../types'
 import type { Turn } from '../types'
 import { CAT_COLORS } from '../palette'
-import { fmtBytes, fmtCompact, fmtPct, fmtTime, fmtUsd, shortModel } from '../format'
+import { fmtBytes, fmtCompact, fmtPct, fmtTime, fmtUsd, fmtUsdSigned, shortModel } from '../format'
 import { useTooltip } from '../tooltip'
 import { Card, Legend } from './Card'
 
@@ -111,13 +111,21 @@ export function TurnStream({ turns }: { turns: Turn[] }) {
       <thead>
         <tr>
           <th>time</th><th>model</th><th>context</th><th>largest category</th>
-          <th>input tokens</th><th>cached</th><th>cost</th><th>TTFT</th>
+          <th>input tokens</th><th>cached</th><th>cost</th><th>TTFT</th><th>hr$</th>
         </tr>
       </thead>
       <tbody>
         {recent.map((t) => {
           const segs = segments(t).sort((a, b) => b.bytes - a.bytes)
           const cache = t.metrics?.cache
+          // Shadow-ledger per-turn net (policy view): actual billed input cost
+          // minus the simulated compressed-since-turn-1 cost. Negative =
+          // compression would have cost money on this turn.
+          const policy = t.metrics?.headroom?.shadow?.policy
+          const cu = cache?.cost_usd
+          const hrNet = policy?.cost_usd != null && cu
+            ? cu.uncached_input + cu.cache_writes + cu.cache_reads - policy.cost_usd
+            : null
           return (
             <tr key={t.id}>
               <td>{fmtTime(t.ts)}</td>
@@ -128,6 +136,7 @@ export function TurnStream({ turns }: { turns: Turn[] }) {
               <td>{cache ? fmtPct(cache.cache_hit_ratio) : '—'}</td>
               <td>{cache?.cost_usd ? fmtUsd(cache.cost_usd.total) : '—'}</td>
               <td>{t.ttftS != null ? `${t.ttftS.toFixed(2)}s` : '—'}</td>
+              <td>{hrNet != null ? fmtUsdSigned(hrNet) : '—'}</td>
             </tr>
           )
         })}

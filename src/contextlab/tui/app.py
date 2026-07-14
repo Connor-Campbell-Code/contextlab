@@ -26,6 +26,7 @@ from .model import (
     fmt_pct,
     fmt_time,
     fmt_usd,
+    fmt_usd_signed,
     latest_delta,
     latest_session,
     sessions_by_count,
@@ -37,7 +38,7 @@ from .model import (
 from .spark import GROUP_COLORS, GROUP_ORDER, StackedSparkline
 
 FEED_ROWS = 100
-FEED_COLUMNS = ("time", "model", "dir", "session", "in", "out", "cache", "hit%", "cost", "ttft")
+FEED_COLUMNS = ("time", "model", "dir", "session", "in", "out", "cache", "hit%", "cost", "ttft", "hr$")
 DIR_CAP_MIN, DIR_CAP_MAX = 10, 24  # dir column: floor for ~86-col panes, ceiling on wide ones
 CELL_PAD_MAX = 3
 
@@ -161,6 +162,14 @@ class ContextTop(App):
         # No cache-savings figure here: next to "headroom" a bare "saved $X"
         # reads as Headroom's doing when it's the KV cache's. The web tiles
         # have room to attribute it; this bar doesn't.
+        # "shadow" is different — it IS attributable: the cache-adjusted
+        # input-dollar net if compression had been on all session. Negative
+        # (red) means the cache it busts costs more than the tokens it saves.
+        shadow = "—"
+        if k.shadow_scored:
+            net = k.shadow_net_calibrated if k.shadow_net_calibrated is not None else k.shadow_net
+            shadow = f"[{'green' if net >= 0 else 'red'}]{fmt_usd_signed(net)}[/]"
+
         # Every KPI in this bar is a window over the turn buffer, not
         # all-time — the spend label carries the window size so a dollar
         # figure is never mistaken for cumulative spend (the old standalone
@@ -169,7 +178,7 @@ class ContextTop(App):
             return (
                 f"[b]spend ({k.turns}t)[/] [green]{fmt_usd(k.spend)}[/]  "
                 f"[b]cache hit[/] {fmt_pct(k.hit_ratio)}  "
-                f"[b]headroom[/] {hr}  "
+                f"[b]headroom[/] {hr}  [b]shadow[/] {shadow}  "
                 f"[b]scope[/] {scope}  {STATE_DOT[self._state]}"
             )
 
@@ -197,6 +206,14 @@ class ContextTop(App):
             total_in = t.cache_read + t.cache_creation + t.input_tokens
             cost = (t.metrics or {}).get("cache", {}).get("cost_usd") if t.metrics else None
             wd = (t.metrics or {}).get("workdir") if t.metrics else None
+            lens = (t.metrics or {}).get("headroom") if t.metrics else None
+            shadow = (lens or {}).get("shadow") or {}
+            policy = shadow.get("policy") or {}
+            hr_net = None
+            # Warmup turns show — rather than a boundary-artifact number.
+            if "cost_usd" in policy and cost and not shadow.get("warmup", shadow.get("reset")):
+                actual_in = cost["uncached_input"] + cost["cache_writes"] + cost["cache_reads"]
+                hr_net = actual_in - policy["cost_usd"]
             rows.append((
                 fmt_time(t.ts),
                 short_model(t.model),
@@ -208,6 +225,7 @@ class ContextTop(App):
                 fmt_pct(t.cache_read / total_in) if total_in else "—",
                 fmt_usd(cost["total"]) if cost else "—",
                 f"{t.ttft_s:.1f}s" if t.ttft_s is not None else "—",
+                fmt_usd_signed(hr_net) if hr_net is not None else "—",
             ))
         dir_cap, pad = self._fit_feed(rows)
         table.cell_padding = pad

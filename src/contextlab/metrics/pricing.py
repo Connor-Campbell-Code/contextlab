@@ -39,6 +39,25 @@ def lookup(model: str | None) -> tuple[float, float] | None:
     return best[1] if best else None
 
 
+def shadow_input_cost_usd(
+    model: str | None,
+    prefix_tokens: int,
+    new_tokens: int,
+    cache_write_multiplier: float = CACHE_WRITE_5M,
+) -> float | None:
+    """Ideal-cache input cost of a simulated request: the surviving prefix
+    bills as reads, everything past it as writes (shadow_sim's model).
+    Input side only — a shadow ledger can't know the counterfactual output."""
+    prices = lookup(model)
+    if prices is None:
+        return None
+    in_price = prices[0] / 1_000_000
+    return round(
+        prefix_tokens * in_price * CACHE_READ + new_tokens * in_price * cache_write_multiplier,
+        6,
+    )
+
+
 def turn_cost_usd(
     model: str | None,
     input_tokens: int,

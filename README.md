@@ -87,6 +87,29 @@ uv pip install --python .venv-headroom/bin/python headroom-ai tiktoken
 
 That's it — the proxy auto-detects `.venv-headroom` at the repo root on the next start. If the venv is missing the lens silently stays off; if it misbehaves it disables itself after 3 failures. Point `CONTEXTLAB_HEADROOM_PY` at a different interpreter to relocate it.
 
+### Shadow cache ledger
+
+Token counts alone can't tell you whether compression saves money on cached
+traffic: rewriting history converts 0.1× cache reads into full-price cache
+writes for everything downstream of the first changed byte. The lens
+therefore keeps a **shadow ledger** per conversation — a simulation of the
+session as it would have unfolded with compression on since turn 1, tracking
+byte-prefix survival between consecutive simulated requests and pricing both
+worlds in cache-adjusted dollars. The KPI (`shadow` in the TUI, "Shadow
+ledger" tile in the dashboard) is the net: positive means compression would
+have saved money on your traffic, negative means the cache it busts costs
+more than the tokens it saves. Reset turns and the turn after (instrument
+warmup) are excluded from the sums.
+
+The simulation models current headroom behavior: session-sticky retrieval
+tool injection, and — when the installed headroom supports the
+`frozen_message_count` parameter in library-mode `compress()`
+([headroom PR #2178](https://github.com/headroomlabs-ai/headroom/pull/2178))
+— cache-aware compression that never rewrites already-sent messages. On
+stock headroom the worker detects the missing parameter and degrades
+gracefully to measuring legacy behavior; `CONTEXTLAB_FROZEN_PREFIX=0`
+forces legacy measurement either way.
+
 ## CLI reference
 
 ```

@@ -26,6 +26,7 @@ from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from ..metrics import pricing
 from ..metrics.analyze import analyze
 from ..metrics.headroom_lens import HeadroomLens
 from ..metrics.spot_check import SpotCheck
@@ -57,6 +58,32 @@ def parse_sse_usage(body: bytes) -> tuple[dict[str, Any], str | None]:
             if isinstance(delta, dict) and delta.get("stop_reason"):
                 stop_reason = delta["stop_reason"]
     return usage, stop_reason
+
+
+def price_shadow(shadow: dict[str, Any] | None, model: str | None, cache: dict[str, Any] | None) -> None:
+    """Attach dollars to the worker's token-denominated shadow ledger.
+
+    marginal.net_usd compares against the request's actual billed input cost:
+    positive means firing compression on this request would have saved money,
+    negative means the cache it busts costs more than the tokens it saves.
+    """
+    if not shadow:
+        return
+    multiplier = pricing.write_multiplier((cache or {}).get("write_ttl"))
+    for view in ("policy", "marginal"):
+        v = shadow.get(view)
+        if not v:
+            continue
+        cost = pricing.shadow_input_cost_usd(model, v["prefix_tokens"], v["new_tokens"], multiplier)
+        if cost is not None:
+            v["cost_usd"] = cost
+    cost_usd = (cache or {}).get("cost_usd")
+    marginal = shadow.get("marginal") or {}
+    if cost_usd and "cost_usd" in marginal:
+        actual_input = (
+            cost_usd["uncached_input"] + cost_usd["cache_writes"] + cost_usd["cache_reads"]
+        )
+        marginal["net_usd"] = round(actual_input - marginal["cost_usd"], 6)
 
 
 def create_app(upstream: str, store: EventStore) -> FastAPI:
@@ -143,11 +170,17 @@ def create_app(upstream: str, store: EventStore) -> FastAPI:
         metrics = analyze(req_json, usage, model, previous) if req_json else None
         if metrics is not None and lens.enabled:
             sample = spot.enabled and spot.due()
-            hr = lens.score(req_json.get("messages") or [], model, include_after=sample)
+            hr = lens.score(
+                req_json.get("messages") or [],
+                model,
+                include_after=sample,
+                context_key=context_key,
+            )
             if hr is not None:
                 messages_after = hr.pop("messages_after", None)
                 if sample:
                     hr["spot_check"] = spot.run(hr, req_json, request_headers, messages_after)
+                price_shadow(hr.get("shadow"), model, metrics.get("cache"))
             metrics["headroom"] = hr
         row_id = store.insert_request(
             {

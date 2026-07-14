@@ -67,6 +67,26 @@ def test_include_after_reaches_worker(fake_worker):
     lens.close()
 
 
+def test_context_key_reaches_worker_and_shadow_returns(fake_worker):
+    fake_worker(
+        """
+        import json, sys
+        for line in sys.stdin:
+            req = json.loads(line)
+            out = {"id": req["id"], "ok": True,
+                   "lens": {"shadow": {"context_key": req.get("context_key")}}}
+            sys.stdout.write(json.dumps(out) + "\\n")
+            sys.stdout.flush()
+        """
+    )
+    lens = HeadroomLens(python=sys.executable)
+    assert lens.score(MESSAGES, None)["shadow"]["context_key"] is None
+    assert lens.score(MESSAGES, None, context_key="sess:abc123")["shadow"] == {
+        "context_key": "sess:abc123"
+    }
+    lens.close()
+
+
 def test_worker_error_returns_none_and_recovers(fake_worker):
     fake_worker(
         """

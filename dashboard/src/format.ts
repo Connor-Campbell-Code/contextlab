@@ -17,6 +17,12 @@ export function fmtUsd(n: number): string {
   return `$${n.toFixed(4)}`
 }
 
+export function fmtUsdSigned(n: number): string {
+  // Explicit sign: a shadow-ledger net can legitimately be negative
+  // (compression that busts cache costs money).
+  return n >= 0 ? `+${fmtUsd(n)}` : `-${fmtUsd(-n)}`
+}
+
 export function fmtPct(n: number): string {
   return `${(n * 100).toFixed(1)}%`
 }

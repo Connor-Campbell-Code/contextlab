@@ -1,7 +1,7 @@
 from pytest import approx
 
 from contextlab.metrics.analyze import composition, turn_delta
-from contextlab.metrics.pricing import turn_cost_usd
+from contextlab.metrics.pricing import shadow_input_cost_usd, turn_cost_usd
 
 
 def _req(n_turns: int, tools=None):
@@ -85,6 +85,61 @@ def test_cache_write_ttl_detected_anywhere_in_request():
     assert econ["write_ttl"] == "1h"
     assert econ["cost_usd"]["cache_writes"] == approx(3.0 * 2.0)
     assert cache_economics("claude-sonnet-5", usage)["cost_usd"]["cache_writes"] == approx(3.0 * 1.25)
+
+
+def test_shadow_input_cost_reads_prefix_writes_the_rest():
+    # 1M prefix tokens at 0.1x + 1M new tokens at 1.25x, sonnet input $3/MTok.
+    cost = shadow_input_cost_usd("claude-sonnet-5", prefix_tokens=1_000_000, new_tokens=1_000_000)
+    assert cost == approx(3.0 * 0.1 + 3.0 * 1.25)
+    assert shadow_input_cost_usd("unknown-model", 1, 1) is None
+
+
+def test_price_shadow_attaches_dollars_and_marginal_net():
+    from contextlab.proxy.app import price_shadow
+
+    shadow = {
+        "policy": {"prefix_tokens": 1_000_000, "new_tokens": 0, "total_tokens": 1_000_000},
+        "marginal": {"prefix_tokens": 0, "new_tokens": 1_000_000, "total_tokens": 1_000_000},
+        "fired": True,
+        "reset": False,
+    }
+    cache = {
+        "cost_usd": turn_cost_usd(
+            "claude-sonnet-5",
+            input_tokens=0,
+            output_tokens=0,
+            cache_read_tokens=1_000_000,
+            cache_creation_tokens=0,
+        )
+    }
+    price_shadow(shadow, "claude-sonnet-5", cache)
+    assert shadow["policy"]["cost_usd"] == approx(0.3)  # all reads
+    assert shadow["marginal"]["cost_usd"] == approx(3.75)  # all writes
+    # Actual input billed $0.30 (all cache reads); firing now would cost $3.75
+    # — the net is NEGATIVE: the busted cache outweighs the tokens saved.
+    assert shadow["marginal"]["net_usd"] == approx(0.3 - 3.75)
+
+    # With a 1h write_ttl in the cache metrics, shadow writes price at 2x.
+    shadow_1h = {
+        "policy": {"prefix_tokens": 0, "new_tokens": 1_000_000, "total_tokens": 1_000_000},
+        "marginal": None,
+        "fired": True,
+        "reset": False,
+    }
+    price_shadow(shadow_1h, "claude-sonnet-5", {**cache, "write_ttl": "1h"})
+    assert shadow_1h["policy"]["cost_usd"] == approx(3.0 * 2.0)
+
+    # Unknown model: no dollars attached, no net.
+    bare = {
+        "policy": {"prefix_tokens": 1, "new_tokens": 1, "total_tokens": 2},
+        "marginal": {"prefix_tokens": 1, "new_tokens": 1, "total_tokens": 2},
+        "fired": False,
+        "reset": False,
+    }
+    price_shadow(bare, "unknown-model", {"cost_usd": None})
+    assert "cost_usd" not in bare["policy"]
+    assert "net_usd" not in bare["marginal"]
+    price_shadow(None, "claude-sonnet-5", cache)  # absent shadow is a no-op
 
 
 def test_workdir_parsed_from_string_and_block_system_prompts():

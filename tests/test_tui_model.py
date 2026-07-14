@@ -162,6 +162,80 @@ def test_aggregate_headroom_calibration():
     assert aggregate([*wild, big_raw]).hr_calibrated == 1.0
 
 
+def shadow_turn(i, *, policy_cost, actual_in, spot=None, warmup=None, reset=False):
+    """A turn carrying a priced shadow ledger; actual input cost is split
+    across the three input-side components to prove they're all summed."""
+    cost_usd = {
+        "total": actual_in + 0.01,  # +output; must NOT enter the shadow math
+        "no_cache_total": 1.0,
+        "cache_savings": 0.5,
+        "uncached_input": actual_in * 0.5,
+        "cache_writes": actual_in * 0.3,
+        "cache_reads": actual_in * 0.2,
+        "output": 0.01,
+    }
+    lens = {
+        "tokens_before": 100_000,
+        "tokens_after": 100_000,
+        "shadow": {
+            "policy": {"prefix_tokens": 1, "new_tokens": 1, "total_tokens": 2, "cost_usd": policy_cost},
+            "marginal": {"prefix_tokens": 1, "new_tokens": 1, "total_tokens": 2},
+            "fired": False,
+            "reset": reset,
+        },
+    }
+    if warmup is not None:
+        lens["shadow"]["warmup"] = warmup
+    if spot:
+        lens["spot_check"] = spot
+    metrics = {**METRICS, "cache": {"cache_hit_ratio": 0.9, "cost_usd": cost_usd}, "headroom": lens}
+    return turn_from_recent(recent_row(id=i, metrics=metrics))
+
+
+def test_aggregate_shadow_ledger_sums_matching_turns():
+    a = shadow_turn(1, policy_cost=0.10, actual_in=0.30)
+    b = shadow_turn(2, policy_cost=0.50, actual_in=0.20)
+    # Scored by the lens but no shadow block: excluded from BOTH shadow sums.
+    plain = turn_from_recent(recent_row(
+        id=3, metrics={**METRICS, "headroom": {"tokens_before": 10, "tokens_after": 10}}
+    ))
+    k = aggregate([a, b, plain])
+    assert k.shadow_scored == 2
+    assert abs(k.shadow_cost - 0.60) < 1e-9
+    assert abs(k.shadow_actual - 0.50) < 1e-9
+    assert abs(k.shadow_net - (-0.10)) < 1e-9  # negative: compression costs money
+    assert k.shadow_factor is None  # no count_tokens samples yet
+    assert k.shadow_net_calibrated is None
+
+
+def test_aggregate_shadow_skips_warmup_turns():
+    a = shadow_turn(1, policy_cost=0.10, actual_in=0.30)
+    # Warmup (reset + the turn after): instrument boundary, not economics.
+    boundary = shadow_turn(2, policy_cost=8.00, actual_in=0.40, warmup=True)
+    # Legacy row without the warmup field falls back to its reset flag.
+    legacy_reset = shadow_turn(3, policy_cost=8.00, actual_in=0.40, reset=True)
+    k = aggregate([a, boundary, legacy_reset])
+    assert k.shadow_scored == 1
+    assert abs(k.shadow_cost - 0.10) < 1e-9
+    assert abs(k.shadow_actual - 0.30) < 1e-9
+    # A legacy non-reset row (no warmup field) still counts.
+    legacy_ok = shadow_turn(4, policy_cost=0.20, actual_in=0.10)
+    assert aggregate([a, legacy_ok]).shadow_scored == 2
+
+
+def test_aggregate_shadow_calibration_scales_shadow_cost():
+    # 3 spot-checked shadow turns: Claude counts 80k where tiktoken counts
+    # 100k → factor 0.8 shrinks the tiktoken-denominated shadow side.
+    spot = {"claude_tokens_before": 80_000, "claude_tokens_after": 80_000}
+    turns = [shadow_turn(i, policy_cost=0.10, actual_in=0.10, spot=spot) for i in (1, 2, 3)]
+    k = aggregate(turns)
+    assert abs(k.shadow_factor - 0.8) < 1e-9
+    assert abs(k.shadow_net - 0.0) < 1e-9  # raw: dead even
+    assert abs(k.shadow_net_calibrated - (0.30 - 0.30 * 0.8)) < 1e-9  # calibrated: positive
+    # Below MIN_SPOT_SAMPLES the raw net stands alone.
+    assert aggregate(turns[:2]).shadow_net_calibrated is None
+
+
 def test_turn_store_dedupes_and_orders():
     store = TurnStore()
     live = turn_from_ws(ws_event(id=5))
@@ -254,9 +328,14 @@ def test_session_helpers():
 
 
 def test_formatters():
+    from contextlab.tui.model import fmt_usd_signed
+
     assert fmt_usd(2.5) == "$2.50"
     assert fmt_usd(0.05) == "$0.050"
     assert fmt_usd(0.0012) == "$0.0012"
+    assert fmt_usd_signed(0.05) == "+$0.050"
+    assert fmt_usd_signed(-0.05) == "-$0.050"
+    assert fmt_usd_signed(0.0) == "+$0.0000"
     assert short_model("claude-opus-4-8-20260101") == "opus-4-8"
     assert short_model(None) == "?"
     assert short_session("abcdef12-3456") == "abcdef12"
@@ -266,9 +345,9 @@ def test_formatters():
 def test_short_dir_and_session_fallback():
     from contextlab.tui.model import short_dir, workdirs_by_session
 
-    assert short_dir("/home/u/projects/demo") == "demo"
-    assert short_dir("/home/u/projects/very_long_project_name") == "very_long…"
-    assert short_dir("/home/u/projects/very_long_project_name", cap=24) == "very_long_project_name"
+    assert short_dir("/home/u/projects/api") == "api"
+    assert short_dir("/home/u/projects/billing_dashboard") == "billing_d…"
+    assert short_dir("/home/u/projects/billing_dashboard", cap=24) == "billing_dashboard"
     assert short_dir(None) == "—"
 
     with_dir = turn_from_recent(

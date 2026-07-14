@@ -119,6 +119,14 @@ class Kpis:
     hr_spot_n: int = 0  # turns carrying count_tokens ground truth
     hr_factor: float | None = None  # measured drift factor (claude/tiktoken)
     hr_calibrated: float | None = None  # hr_savings × hr_factor, capped at 1
+    # Shadow cache ledger (input-side dollars, policy view, scored turns only;
+    # both sums cover the SAME turns so the comparison is apples-to-apples).
+    shadow_cost: float = 0.0  # Σ simulated input cost with compression on
+    shadow_actual: float = 0.0  # Σ actual billed input cost, same turns
+    shadow_net: float = 0.0  # actual − shadow; negative = compression costs money
+    shadow_scored: int = 0
+    shadow_factor: float | None = None  # claude/tiktoken raw-count drift factor
+    shadow_net_calibrated: float | None = None  # net with shadow_cost drift-scaled
 
 
 def aggregate(turns: list[Turn]) -> Kpis:
@@ -129,6 +137,8 @@ def aggregate(turns: list[Turn]) -> Kpis:
     reads = inputs = priced = 0
     hr_before = hr_after = hr_scored = 0
     sc_tb = sc_ta = sc_cb = sc_ca = spot_n = 0
+    sh_cost = sh_actual = 0.0
+    sh_scored = 0
     for t in turns:
         reads += t.cache_read
         inputs += t.cache_read + t.cache_creation + t.input_tokens
@@ -149,6 +159,17 @@ def aggregate(turns: list[Turn]) -> Kpis:
                 sc_ta += lens.get("tokens_after") or 0
                 sc_cb += spot["claude_tokens_before"]
                 sc_ca += spot.get("claude_tokens_after") or 0
+            shadow = lens.get("shadow") or {}
+            policy = shadow.get("policy") or {}
+            # Warmup turns (reset + the turn after) are instrument boundary,
+            # not economics — a proxy restart makes the shadow world re-pay
+            # a cache write the real session never paid. Rows from before
+            # the warmup field existed fall back to their reset flag.
+            warmup = shadow.get("warmup", shadow.get("reset"))
+            if "cost_usd" in policy and cost and not warmup:
+                sh_cost += policy["cost_usd"]
+                sh_actual += cost["uncached_input"] + cost["cache_writes"] + cost["cache_reads"]
+                sh_scored += 1
     hr_savings = (hr_before - hr_after) / hr_before if hr_before else 0.0
     # Drift calibration: on the spot-checked pool, compare the savings ratio
     # under Claude's tokenizer vs tiktoken's, and scale the population figure
@@ -161,6 +182,13 @@ def aggregate(turns: list[Turn]) -> Kpis:
         if tik > 0:
             hr_factor = claude / tik
             hr_calibrated = min(hr_savings * hr_factor, 1.0)
+    # Shadow dollars are tiktoken-denominated while the actual side is
+    # Claude-billed; scale the shadow sum by the pooled raw-count ratio
+    # (claude_before / tiktoken_before) from the spot-checked turns.
+    shadow_factor = shadow_net_calibrated = None
+    if spot_n >= MIN_SPOT_SAMPLES and sc_tb and sc_cb:
+        shadow_factor = sc_cb / sc_tb
+        shadow_net_calibrated = sh_actual - sh_cost * shadow_factor
     return Kpis(
         spend=spend,
         savings=savings,
@@ -172,6 +200,12 @@ def aggregate(turns: list[Turn]) -> Kpis:
         hr_spot_n=spot_n,
         hr_factor=hr_factor,
         hr_calibrated=hr_calibrated,
+        shadow_cost=sh_cost,
+        shadow_actual=sh_actual,
+        shadow_net=sh_actual - sh_cost,
+        shadow_scored=sh_scored,
+        shadow_factor=shadow_factor,
+        shadow_net_calibrated=shadow_net_calibrated,
     )
 
 
@@ -289,6 +323,12 @@ def fmt_usd(n: float) -> str:
     if n >= 0.01:
         return f"${n:.3f}"
     return f"${n:.4f}"
+
+
+def fmt_usd_signed(n: float) -> str:
+    """Explicit sign, because a shadow-ledger net can legitimately be
+    negative (compression that busts cache costs money)."""
+    return f"+{fmt_usd(n)}" if n >= 0 else f"-{fmt_usd(-n)}"
 
 
 def fmt_pct(n: float) -> str:

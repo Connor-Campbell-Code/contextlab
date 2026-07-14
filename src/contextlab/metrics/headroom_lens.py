@@ -73,12 +73,16 @@ class HeadroomLens:
         model: str | None,
         timeout: float = 30.0,
         include_after: bool = False,
+        context_key: str | None = None,
     ) -> dict[str, Any] | None:
         """Would-be Headroom outcome for this request's messages, or None.
 
         include_after asks the worker to return the compressed message list
         (lens["messages_after"], None when nothing fired) so the caller can
         spot-check it against the API's count_tokens.
+
+        context_key asks the worker to advance that conversation's shadow
+        cache ledger and return it as lens["shadow"] (see shadow_sim).
         """
         if self._disabled or not messages:
             return None
@@ -95,6 +99,7 @@ class HeadroomLens:
                             "messages": messages,
                             "model": model,
                             "include_after": include_after,
+                            "context_key": context_key,
                         }
                     )
                     + "\n"

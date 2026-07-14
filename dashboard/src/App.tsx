@@ -7,7 +7,7 @@ import { ToolBloat } from './components/ToolBloat'
 import { HeadroomLensCard } from './components/HeadroomLens'
 import { TTFTChart } from './components/TTFTChart'
 import { Learn } from './components/Learn'
-import { fmtPct, fmtUsd, shortSession } from './format'
+import { fmtPct, fmtUsd, fmtUsdSigned, shortSession } from './format'
 
 function StatTile({ label, value, note, good }: {
   label: string
@@ -47,6 +47,7 @@ export default function App() {
     let spend = 0, savings = 0, reads = 0, input = 0, priced = 0
     let hrBefore = 0, hrAfter = 0, hrScored = 0
     let scTikB = 0, scTikA = 0, scClB = 0, scClA = 0, spotN = 0
+    let shCost = 0, shActual = 0, shScored = 0
     for (const t of filtered) {
       const cache = t.metrics?.cache
       reads += t.cacheRead
@@ -68,6 +69,17 @@ export default function App() {
           scClB += h.spot_check.claude_tokens_before
           scClA += h.spot_check.claude_tokens_after
         }
+        // Shadow ledger (mirrored in tui/model.py aggregate): both sums cover
+        // the SAME turns so shadow-vs-actual is apples-to-apples. Warmup
+        // turns (reset + the turn after — instrument boundary, not
+        // economics) are excluded; pre-warmup-field rows fall back to reset.
+        const policy = h.shadow?.policy
+        const warmup = h.shadow?.warmup ?? h.shadow?.reset
+        if (policy?.cost_usd != null && cache?.cost_usd && !warmup) {
+          shCost += policy.cost_usd
+          shActual += cache.cost_usd.uncached_input + cache.cost_usd.cache_writes + cache.cost_usd.cache_reads
+          shScored++
+        }
       }
     }
     const hrSavings = hrBefore ? (hrBefore - hrAfter) / hrBefore : 0
@@ -86,9 +98,19 @@ export default function App() {
         hrCalibrated = Math.min(hrSavings * hrFactor, 1)
       }
     }
+    // Shadow dollars are tiktoken-denominated, the actual side is Claude-
+    // billed; the pooled raw-count ratio bridges the tokenizers.
+    let shadowFactor: number | null = null
+    let shadowNetCalibrated: number | null = null
+    if (spotN >= MIN_SPOT_SAMPLES && scTikB && scClB) {
+      shadowFactor = scClB / scTikB
+      shadowNetCalibrated = shActual - shCost * shadowFactor
+    }
     return {
       spend, savings, hitRatio: input ? reads / input : 0, priced,
       hrScored, hrSavings, hrCalibrated, hrFactor, spotN,
+      shadowCost: shCost, shadowActual: shActual, shadowNet: shActual - shCost,
+      shadowScored: shScored, shadowFactor, shadowNetCalibrated,
     }
   }, [filtered])
 
@@ -145,6 +167,14 @@ export default function App() {
                   ? `calibrated ×${kpi.hrFactor!.toFixed(2)} via ${kpi.spotN} count_tokens samples (raw ${fmtPct(kpi.hrSavings)})`
                   : `on your traffic (${kpi.hrScored} turns scored, token-weighted)`
               }
+            />
+          )}
+          {kpi.shadowScored > 0 && (
+            <StatTile
+              label="Shadow ledger (cache-adjusted)"
+              value={fmtUsdSigned(kpi.shadowNetCalibrated ?? kpi.shadowNet)}
+              note={`compression on all session: ${fmtUsd(kpi.shadowCost)} vs ${fmtUsd(kpi.shadowActual)} actual input — negative = cache busts cost more than tokens saved`}
+              good={(kpi.shadowNetCalibrated ?? kpi.shadowNet) >= 0}
             />
           )}
         </div>

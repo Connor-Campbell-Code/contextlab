@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import type { Turn } from '../types'
 import { CAT_COLORS } from '../palette'
-import { fmtBytes, fmtPct } from '../format'
+import { fmtBytes, fmtPct, fmtUsdSigned } from '../format'
 
 /* The learning module: one section per dashboard tile — how the number is
  * computed, what it means, why it's worth tracking. Live values from the
@@ -31,6 +31,17 @@ function Live({ children }: { children: ReactNode }) {
   return <p className="live-note">📍 {children}</p>
 }
 
+/* Some tiles are best explained by answering the question they provoke —
+ * phrased the way a reader would actually ask it. */
+function QA({ q, children }: { q: string; children: ReactNode }) {
+  return (
+    <div className="qa">
+      <p className="qa-q">“{q}”</p>
+      <div className="qa-a">{children}</div>
+    </div>
+  )
+}
+
 function Swatch({ cat }: { cat: string }) {
   return <span className="swatch" style={{ background: CAT_COLORS[cat] }} />
 }
@@ -45,6 +56,17 @@ export function Learn({ turns }: { turns: Turn[] }) {
   for (const t of scored) {
     hrBefore += t.metrics!.headroom!.tokens_before
     hrAfter += t.metrics!.headroom!.tokens_after
+  }
+  let shCost = 0, shActual = 0, shScored = 0
+  for (const t of scored) {
+    const shadow = t.metrics!.headroom!.shadow
+    const policy = shadow?.policy
+    const cost = t.metrics!.cache.cost_usd
+    if (policy?.cost_usd != null && cost && !(shadow?.warmup ?? shadow?.reset)) {
+      shCost += policy.cost_usd
+      shActual += cost.uncached_input + cost.cache_writes + cost.cache_reads
+      shScored += 1
+    }
   }
 
   return (
@@ -99,6 +121,49 @@ export function Learn({ turns }: { turns: Turn[] }) {
           {scored.length
             ? <>{scored.length} turns scored so far; token-weighted would-be savings {fmtPct(hrBefore ? (hrBefore - hrAfter) / hrBefore : 0)} (raw tiktoken — the KPI tile shows this scaled by the count_tokens calibration factor, disclosed in its note).</>
             : <>no turns scored yet — the tile appears once the sidecar sees traffic.</>}
+        </Live>
+      </Section>
+
+      <Section title="KPI · Shadow ledger (cache-adjusted)">
+        <QA q="My shadow ledger is negative — shouldn't compression be saving me money?">
+          <p>
+            A negative shadow ledger is the instrument working, not a bug. The tile is a{' '}
+            <strong>counterfactual</strong>: on every request it can score, the sidecar simulates
+            what your session would have looked like with compression running, prices that
+            simulated session, and subtracts it from what you actually paid on the input side.
+            Positive means compression would have saved money; negative means it would have{' '}
+            <em>cost</em> money.
+          </p>
+          <p>
+            How can removing tokens cost money? Because compression rewrites conversation
+            history, and the prompt cache is keyed on an exact byte-prefix match. Every token
+            after the first edited byte stops being a 0.1× cache read and is re-billed as a
+            cache write — 1.25× at the 5-minute TTL, 2× at the 1-hour TTL. At the 1-hour rate
+            that's a <strong>20× per-token price jump</strong> for everything downstream of the
+            edit.
+          </p>
+          <p>
+            A generic worked example: say a request re-sends 100K tokens of history and
+            compression can remove 10% of it. Uncompressed, with a healthy cache, those 100K
+            tokens bill as reads: 100K × 0.1×. Compressed, the 90K that survive sit behind an
+            edited prefix, so they bill as writes: 90K × 2×. The compressed request costs{' '}
+            <strong>18× more</strong> — deleting 10K tokens nowhere near pays for re-writing the
+            other 90K. Compression only wins where there is little cache to protect: low
+            hit-ratio traffic, one-shot requests, or edits confined to the very tail of the
+            context.
+          </p>
+          <p>
+            Reading the fine print: the figure is input-side only (the counterfactual output is
+            unknowable), covers only turns the lens could score, is windowed like every KPI on
+            this page, and the simulated side is tiktoken-denominated — the tile scales it by
+            the measured <code>count_tokens</code> drift factor once enough spot-checks exist,
+            and its note discloses both sums so you can see the comparison it's making.
+          </p>
+        </QA>
+        <Live>
+          {shScored
+            ? <>{shScored} turns in your shadow ledger: {fmtUsdSigned(shActual - shCost)} net (raw tiktoken-denominated — the KPI tile shows this drift-calibrated). Negative means the cache is currently beating compression on your traffic.</>
+            : <>no shadow-scored turns yet — the ledger fills as the sidecar sees traffic.</>}
         </Live>
       </Section>
 
