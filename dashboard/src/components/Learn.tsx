@@ -113,7 +113,7 @@ export function Learn({ turns }: { turns: Turn[] }) {
 
       <Section title="KPI · Headroom would save">
         <HowWhatWhy
-          how={<>A sidecar process runs the real <code>headroom.compress()</code> (v0.30.0) on every request's message list, off the request path. The tile is token-weighted: <code>(Σ tokens_before − Σ tokens_after) ÷ Σ tokens_before</code> across scored turns, counted with tiktoken — not Headroom's own <code>len//4</code> estimator, which experiment 01 showed is up to 12× off. One honest caveat: tiktoken is OpenAI's o200k tokenizer, and Anthropic has never published Claude's — so even these counts are estimates. The bias mostly cancels in a same-tokenizer ratio; to measure what's left, every 25th scored request is spot-checked against the API's <code>count_tokens</code> endpoint (Claude's real tokenizer), and the Headroom lens card on the Live view reports the observed drift in its calibration line. Once 3+ spot-checks exist, the tile applies the correction: the tiktoken figure is scaled by the savings ratio measured under Claude's tokenizer on the sampled turns, and the raw figure moves to the tile's note. The factor is multiplicative, so a session where Headroom never fires stays honestly at 0%.</>}
+          how={<>A sidecar process runs the real <code>headroom.compress()</code> on every request's message list, off the request path. The tile is token-weighted: <code>(Σ tokens_before − Σ tokens_after) ÷ Σ tokens_before</code> across scored turns, counted with tiktoken — not Headroom's own <code>len//4</code> estimator, which we measured at up to 12× off. One honest caveat: tiktoken is OpenAI's o200k tokenizer, and Anthropic has never published Claude's — so even these counts are estimates. The bias mostly cancels in a same-tokenizer ratio; to measure what's left, every 25th scored request is spot-checked against the API's <code>count_tokens</code> endpoint (Claude's real tokenizer), and the Headroom lens card on the Live view reports the observed drift in its calibration line. Once 3+ spot-checks exist, the tile applies the correction: the tiktoken figure is scaled by the savings ratio measured under Claude's tokenizer on the sampled turns, and the raw figure moves to the tile's note. The factor is multiplicative, so a session where Headroom never fires stays honestly at 0%.</>}
           what={<>A live shadow A/B: the compression savings you would be getting if this traffic ran through Headroom, measured on your actual payloads instead of its benchmark corpus.</>}
           why={<>This is the payload-realism experiment running continuously. Headroom's README claims 60–95% on JSON; on short real coding sessions we measured 0.0% (its router refuses to touch code, diffs, and file reads) — but on long sessions it does fire: its <code>read_lifecycle</code> transform guts earlier <code>Read</code> results once the same file is later edited or re-read, and one live spot-checked request measured 24.3% would-be savings by <code>count_tokens</code> ground truth. So the fire rate is session-length-dependent, not zero. The Headroom lens card on the Live view names the tool responsible per payload (bars + the "router said" column); whether answers survive losing those "stale" reads is still the untested half of the ledger.</>}
         />
@@ -172,7 +172,7 @@ export function Learn({ turns }: { turns: Turn[] }) {
           Each row is one request; the bar is its full context in <strong>bytes</strong>, split by
           category. Bytes, not tokens, on purpose: the request is JSON we can measure exactly,
           but only Anthropic's server knows how it tokenizes — pretending otherwise is how
-          Headroom's <code>len//4</code> problem happens (notebook 03). Byte fractions are a faithful
+          Headroom's <code>len//4</code> problem happens. Byte fractions are a faithful
           answer to “where is my window going” without fake precision.
         </p>
         <dl className="cat-list">
@@ -195,8 +195,7 @@ export function Learn({ turns }: { turns: Turn[] }) {
             0.1× cache read. Why it's still worth watching: it sits in front of everything, so a
             single tool added or removed mid-session (an MCP server connecting late, Headroom's
             conditional retrieval tool) rewrites byte one of the prefix and busts the{' '}
-            <em>entire conversation's</em> cache — that's the ⚠ flag, and experiment 04's
-            proxy-mode finding.
+            <em>entire conversation's</em> cache — that's the ⚠ flag.
           </dd>
 
           <dt><Swatch cat="user_text" />User text</dt>
@@ -269,7 +268,7 @@ export function Learn({ turns }: { turns: Turn[] }) {
         <HowWhatWhy
           how={<>Per request: time from the proxy receiving your request to the first byte of the streamed response (<code>t_first_byte − t_start</code>). Measured at the proxy, so it includes the upstream round-trip but not your terminal's rendering.</>}
           what={<>How long the model made you wait before it started answering. Correlates with uncached input size — the tooltip shows input tokens so you can eyeball that relationship on your own traffic.</>}
-          why={<>Latency is the third price of context, after dollars and attention. A cache hit doesn't just save money; prefix reuse is also faster to process. And it's the claim-registry metric for Headroom's self-contradictory latency numbers (52ms docs vs 1–5ms author claim) — experiment 05, still open.</>}
+          why={<>Latency is the third price of context, after dollars and attention. A cache hit doesn't just save money; prefix reuse is also faster to process. And it's the metric that would settle Headroom's self-contradictory latency numbers (52ms docs vs 1–5ms author claim) — still an open question.</>}
         />
       </Section>
 
@@ -283,7 +282,7 @@ export function Learn({ turns }: { turns: Turn[] }) {
 
       <Section title="Headroom lens">
         <HowWhatWhy
-          how={<>The sidecar compresses each request's full message list, then diffs every tool_result block before vs after, matched by <code>tool_use_id</code>. In-context diffing matters: scored in isolation, any payload reads as “recent” and Headroom protects recent turns — a method bug this dashboard exposed in our own experiment 02 (notebook 05).</>}
+          how={<>The sidecar compresses each request's full message list, then diffs every tool_result block before vs after, matched by <code>tool_use_id</code>. In-context diffing matters: scored in isolation, any payload reads as “recent” and Headroom protects recent turns — a method bug this dashboard exposed in our own earlier scoring.</>}
           what={<>Per tool: bytes in context, how many of its payloads compress() actually shrank, and by how much. “Untouched” is Headroom's router declining — for code and file reads, correctly.</>}
           why={<>It attributes the KPI. If “Headroom would save” ever moves off 0%, this card names the tool and payload shape responsible — turning a marketing-number dispute into a per-payload, reproducible observation on your own work.</>}
         />
