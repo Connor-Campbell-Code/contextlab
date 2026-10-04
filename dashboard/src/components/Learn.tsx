@@ -89,7 +89,7 @@ export function Learn({ turns }: { turns: Turn[] }) {
 
       <Section title="KPI · Spend">
         <HowWhatWhy
-          how={<>Sum over requests of a four-part price: <code>uncached input × rate</code> + <code>cache writes × 1.25×rate</code> + <code>cache reads × 0.1×rate</code> + <code>output × output-rate</code>. The token splits come from the API's usage block; rates are per-model (e.g. sonnet $3/$15 per MTok in/out). Unknown models show “unpriced” rather than a wrong number.</>}
+          how={<>Sum over requests of a four-part price: <code>uncached input × rate</code> + <code>cache writes × 1.25×rate</code> + <code>cache reads × read-rate</code> + <code>output × output-rate</code>. The token splits come from the API's usage block; rates are per-model (e.g. Opus 5.5 $4/$20 per MTok in/out), and so is the read rate — 0.1× input on most models, 0.05× on Opus 5.5, 0.025× on Fable 5.1. Unknown models show “unpriced” rather than a wrong number.</>}
           what={<>What this traffic actually cost, respecting cache tiers — not the naive <code>tokens × price</code> figure, which can be off by ~10× in either direction.</>}
           why={<>Dollars are the only unit in which context decisions compose honestly. Notebook 04's core result: a 34% token cut is only a 34% dollar cut if it doesn't fight the cache — and the cache, not compression, is the first-order lever.</>}
         />

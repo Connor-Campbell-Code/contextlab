@@ -20,7 +20,7 @@ def _req(n_turns: int, tools=None):
                 {"type": "tool_result", "tool_use_id": f"t{i}", "content": "data " * 100},
             ],
         })
-    return {"model": "claude-sonnet-5", "system": "sys", "tools": tools or [], "messages": msgs}
+    return {"model": "claude-sonnet-4-6", "system": "sys", "tools": tools or [], "messages": msgs}
 
 
 def test_composition_attributes_tool_results_to_tool_names():
@@ -43,7 +43,7 @@ def test_turn_delta_detects_stable_prefix_and_tool_churn():
 
 
 def test_cache_pricing_multipliers():
-    cost = turn_cost_usd("claude-sonnet-5", input_tokens=0, output_tokens=0,
+    cost = turn_cost_usd("claude-sonnet-4-6", input_tokens=0, output_tokens=0,
                          cache_read_tokens=1_000_000, cache_creation_tokens=1_000_000)
     assert cost["cache_reads"] == approx(3.0 * 0.1)
     assert cost["cache_writes"] == approx(3.0 * 1.25)
@@ -52,7 +52,7 @@ def test_cache_pricing_multipliers():
 
     from contextlab.metrics.pricing import CACHE_WRITE_1H, write_multiplier
 
-    cost_1h = turn_cost_usd("claude-sonnet-5", 0, 0, 0, 1_000_000,
+    cost_1h = turn_cost_usd("claude-sonnet-4-6", 0, 0, 0, 1_000_000,
                             cache_write_multiplier=CACHE_WRITE_1H)
     assert cost_1h["cache_writes"] == approx(3.0 * 2.0)
     assert write_multiplier("1h") == 2.0
@@ -81,15 +81,15 @@ def test_cache_write_ttl_detected_anywhere_in_request():
 
     # the ttl flows through cache_economics into the write price
     usage = {"cache_creation_input_tokens": 1_000_000}
-    econ = cache_economics("claude-sonnet-5", usage, write_ttl="1h")
+    econ = cache_economics("claude-sonnet-4-6", usage, write_ttl="1h")
     assert econ["write_ttl"] == "1h"
     assert econ["cost_usd"]["cache_writes"] == approx(3.0 * 2.0)
-    assert cache_economics("claude-sonnet-5", usage)["cost_usd"]["cache_writes"] == approx(3.0 * 1.25)
+    assert cache_economics("claude-sonnet-4-6", usage)["cost_usd"]["cache_writes"] == approx(3.0 * 1.25)
 
 
 def test_shadow_input_cost_reads_prefix_writes_the_rest():
     # 1M prefix tokens at 0.1x + 1M new tokens at 1.25x, sonnet input $3/MTok.
-    cost = shadow_input_cost_usd("claude-sonnet-5", prefix_tokens=1_000_000, new_tokens=1_000_000)
+    cost = shadow_input_cost_usd("claude-sonnet-4-6", prefix_tokens=1_000_000, new_tokens=1_000_000)
     assert cost == approx(3.0 * 0.1 + 3.0 * 1.25)
     assert shadow_input_cost_usd("unknown-model", 1, 1) is None
 
@@ -105,14 +105,14 @@ def test_price_shadow_attaches_dollars_and_marginal_net():
     }
     cache = {
         "cost_usd": turn_cost_usd(
-            "claude-sonnet-5",
+            "claude-sonnet-4-6",
             input_tokens=0,
             output_tokens=0,
             cache_read_tokens=1_000_000,
             cache_creation_tokens=0,
         )
     }
-    price_shadow(shadow, "claude-sonnet-5", cache)
+    price_shadow(shadow, "claude-sonnet-4-6", cache)
     assert shadow["policy"]["cost_usd"] == approx(0.3)  # all reads
     assert shadow["marginal"]["cost_usd"] == approx(3.75)  # all writes
     # Actual input billed $0.30 (all cache reads); firing now would cost $3.75
@@ -126,7 +126,7 @@ def test_price_shadow_attaches_dollars_and_marginal_net():
         "fired": True,
         "reset": False,
     }
-    price_shadow(shadow_1h, "claude-sonnet-5", {**cache, "write_ttl": "1h"})
+    price_shadow(shadow_1h, "claude-sonnet-4-6", {**cache, "write_ttl": "1h"})
     assert shadow_1h["policy"]["cost_usd"] == approx(3.0 * 2.0)
 
     # Unknown model: no dollars attached, no net.
@@ -139,7 +139,7 @@ def test_price_shadow_attaches_dollars_and_marginal_net():
     price_shadow(bare, "unknown-model", {"cost_usd": None})
     assert "cost_usd" not in bare["policy"]
     assert "net_usd" not in bare["marginal"]
-    price_shadow(None, "claude-sonnet-5", cache)  # absent shadow is a no-op
+    price_shadow(None, "claude-sonnet-4-6", cache)  # absent shadow is a no-op
 
 
 def test_workdir_parsed_from_string_and_block_system_prompts():
@@ -153,3 +153,28 @@ def test_workdir_parsed_from_string_and_block_system_prompts():
     ) == "/tmp/x"
     assert workdir({"system": "no marker here"}) is None
     assert workdir({}) is None
+
+
+def test_per_model_cache_read_rates():
+    reads = lambda m: turn_cost_usd(m, 0, 0, 1_000_000, 0)["cache_reads"]  # noqa: E731
+    assert reads("claude-opus-5-5") == approx(4.0 * 0.05)
+    assert reads("claude-fable-5-1") == approx(10.0 * 0.025)
+    assert reads("claude-fable-5") == approx(10.0 * 0.1)
+    assert reads("claude-sonnet-5-5") == approx(2.0 * 0.1)
+    assert shadow_input_cost_usd("claude-opus-5-5", 1_000_000, 0) == approx(0.2)
+
+
+def test_price_lookup_is_exact_not_prefix():
+    from contextlab.metrics.pricing import lookup
+
+    assert lookup("claude-opus-5-5")[:2] == (4.0, 20.0)
+    assert lookup("claude-opus-5")[:2] == (5.0, 25.0)
+    assert lookup("claude-sonnet-5")[:2] == (2.0, 10.0)
+    assert lookup("claude-opus-4-7")[:2] == (5.0, 25.0)  # not opus-4's $15
+    # dated snapshots resolve to their alias
+    assert lookup("claude-haiku-4-5-20251001")[:2] == (1.0, 5.0)
+    assert lookup("claude-opus-4-20250514")[:2] == (15.0, 75.0)
+    # an unlisted sibling is unpriced, not silently given a neighbour's rates
+    assert lookup("claude-opus-5-7") is None
+    assert lookup("claude-opus-5-5-preview") is None
+

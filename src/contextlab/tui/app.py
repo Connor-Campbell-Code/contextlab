@@ -174,9 +174,13 @@ class ContextTop(App):
         # all-time — the spend label carries the window size so a dollar
         # figure is never mistaken for cumulative spend (the old standalone
         # "turns" entry was the same number, unlabeled as a window).
+        # Unpriced turns (model missing from pricing.PRICES) are excluded from
+        # the sum, so flag them — otherwise the figure is silently low.
+        unpriced = f" [yellow]+{k.unpriced} unpriced[/]" if k.unpriced else ""
+
         def bar(hr: str) -> str:
             return (
-                f"[b]spend ({k.turns}t)[/] [green]{fmt_usd(k.spend)}[/]  "
+                f"[b]spend ({k.turns}t)[/] [green]{fmt_usd(k.spend)}[/]{unpriced}  "
                 f"[b]cache hit[/] {fmt_pct(k.hit_ratio)}  "
                 f"[b]headroom[/] {hr}  [b]shadow[/] {shadow}  "
                 f"[b]scope[/] {scope}  {STATE_DOT[self._state]}"
