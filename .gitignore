@@ -8,4 +8,4 @@ node_modules/
 dist/
 .pytest_cache/
 experiments/**/raw/
-.venv-headroom/
+.venv-headroom
