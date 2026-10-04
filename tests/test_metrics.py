@@ -178,3 +178,36 @@ def test_price_lookup_is_exact_not_prefix():
     assert lookup("claude-opus-5-7") is None
     assert lookup("claude-opus-5-5-preview") is None
 
+
+def test_reprice_rebuilds_stored_dollars(tmp_path):
+    import json
+    import sqlite3
+
+    from contextlab.store.db import EventStore
+    from contextlab.store.reprice import reprice
+
+    db = tmp_path / "events.db"
+    store = EventStore(db)
+    tokens = dict(input_tokens=0, output_tokens=0, cache_read_tokens=1_000_000,
+                  cache_creation_tokens=0)
+    # A row ingested while opus-5-5 was missing from the table: unpriced, with
+    # a shadow ledger that never got dollars either.
+    shadow = {"policy": {"prefix_tokens": 1_000_000, "new_tokens": 0}, "marginal": None}
+    store.insert_request(dict(ts=1.0, model="claude-opus-5-5", **tokens, metrics={
+        "cache": {"write_ttl": None, "cost_usd": None}, "headroom": {"shadow": shadow}}))
+    # A row priced under the right table already: left untouched.
+    good = {"cache": {"write_ttl": None, "cost_usd": turn_cost_usd("claude-opus-4-8", 0, 0, 1_000_000, 0)}}
+    store.insert_request(dict(ts=2.0, model="claude-opus-4-8", **tokens, metrics=good))
+
+    summary = reprice(db, dry_run=True)
+    assert summary["_changed"][0] == 1
+    assert summary["claude-opus-5-5"][1:] == [0.0, approx(0.2)]
+    rows = sqlite3.connect(db).execute("SELECT metrics FROM requests ORDER BY id").fetchall()
+    assert json.loads(rows[0][0])["cache"]["cost_usd"] is None  # dry run wrote nothing
+
+    reprice(db)
+    m = json.loads(sqlite3.connect(db).execute(
+        "SELECT metrics FROM requests WHERE id = 1").fetchone()[0])
+    assert m["cache"]["cost_usd"]["cache_reads"] == approx(0.2)
+    assert m["headroom"]["shadow"]["policy"]["cost_usd"] == approx(0.2)
+    assert reprice(db)["_changed"][0] == 0  # idempotent

@@ -116,7 +116,13 @@ forces legacy measurement either way.
 contextlab proxy [--port 8484] [--host 127.0.0.1]
                  [--upstream https://api.anthropic.com] [--db contextlab.db]
 contextlab top   [--url http://127.0.0.1:8484] [--workdir .] [--limit 500]
+contextlab reprice [--db contextlab.db] [--dry-run]
 ```
+
+Dollars are priced once, at ingest, from the table in `metrics/pricing.py`;
+models missing from it show as *unpriced* rather than a guessed figure. After
+updating that table, `contextlab reprice` rebuilds every stored row's dollars
+from its recorded token usage (safe to run against a live proxy).
 
 HTTP surface (everything else is proxied through to `--upstream` untouched):
 
@@ -131,13 +137,14 @@ Environment variables:
 
 | Variable | What |
 |---|---|
+| `CONTEXTLAB_DB` | default `--db` path, e.g. to keep the event store outside the checkout |
 | `CONTEXTLAB_DASHBOARD` | override the dashboard `dist/` directory the proxy serves |
 | `CONTEXTLAB_HEADROOM_PY` | python interpreter for the headroom lens worker |
 | `CONTEXTLAB_SPOTCHECK_EVERY` | calibrate the lens against `count_tokens` every N requests (default 25) |
 
 ## Privacy note
 
-`contextlab.db` stores the **full request/response bodies** of your captured traffic (zlib-compressed) so metrics can be recomputed later. It stays on your machine and is gitignored — treat it like the transcripts it contains: don't commit it or share it.
+`contextlab.db` stores the **full request/response bodies** of your captured traffic (zlib-compressed) so metrics can be recomputed later. It stays on your machine and is gitignored (set `CONTEXTLAB_DB` to keep it outside the checkout entirely) — treat it like the transcripts it contains: don't commit it or share it.
 
 ## Development
 

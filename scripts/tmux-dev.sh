@@ -48,11 +48,14 @@ proxy_up() { curl -sf -m 1 "$CONTEXTLAB/_contextlab/health" >/dev/null 2>&1; }
 
 tmux new-session -d -s "$SESSION" -c "$INVOCATION_DIR" -n dev
 
-# Start the proxy in a background window when it isn't already running
-# (its SQLite db lands in the contextlab checkout, which gitignores *.db).
+# Start the proxy in a background window when it isn't already running.
+# Its SQLite db lands in the contextlab checkout (which gitignores *.db)
+# unless CONTEXTLAB_DB points elsewhere — passed explicitly, since the new
+# window's shell gets the tmux server's environment, not this script's.
 if ! proxy_up; then
   tmux new-window -d -t "$SESSION" -n proxy -c "$REPO_ROOT"
-  tmux send-keys -t "$SESSION:proxy" "uv run contextlab proxy" C-m
+  tmux send-keys -t "$SESSION:proxy" \
+    "uv run contextlab proxy${CONTEXTLAB_DB:+ --db \"$CONTEXTLAB_DB\"}" C-m
   for _ in $(seq 1 20); do proxy_up && break; sleep 0.25; done
 fi
 
